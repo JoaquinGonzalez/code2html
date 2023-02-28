@@ -156,7 +156,6 @@ static void render(struct CHList *list)
     unsigned char nl = 0;
     unsigned int i = 0;
 
-    out = stringcat("<pre><code class=\"code-highlight\">", out);
     while (next != NULL) {
         if (next->ptr != NULL) {
             t = (struct CHToken*)next->ptr;
@@ -195,7 +194,6 @@ static void render(struct CHList *list)
 
         next = next->next;
     }
-    out = stringcat("</code></pre>", out);
 }
 
 static struct CHToken* createtoken(int type)
@@ -305,75 +303,95 @@ static void tokenize(char *code)
     }
 }
 
-static int findcode(char *code, size_t *len)
+static int findcode(char *html, size_t *len)
 {
     unsigned int ch = 0;
-    int start = 0, end = 0;
+    int start = -1, end = -1;
+    char tag[10];
 
-    while (code[ch]) {
-        if (code[ch] == '`') {
-            if (code[ch+1] == '`' && code[ch+2] == '`') {
-                start = ch;
+    while (html[ch]) {
+        if (html[ch] == '<') {
+            if (start < 0) {
+                if (html[ch+1] == 'c' && html[ch+5] == '>') {
+                    memcpy(tag, html+ch, 6);
+                    tag[6] = 0;
 
-                ch += 3;
-                while (!CHAR_IS_EOF(code[ch]) && code[ch] != '`') ++ch;
+                    if (strcmp("<code>", tag) == 0) {
+                        start = ch;
+                        ch += 5;
+                    }
+                }
+            } else {
+                if (html[ch+1] == '/' && html[ch+6] == '>') {
+                    memcpy(tag, html+ch, 7);
+                    tag[7] = 0;
 
-                if (code[ch] == '`' && code[ch+1] == '`' && code[ch+2] == '`') {
-                    end = ch + 2;
-                    break;
+                    if (strcmp("</code>", tag) == 0) {
+                        end = ch;
+                        ch += 6;
+                        break;
+                    }
                 }
             }
-        } else {
-            ++ch;
         }
+        ++ch;
     }
 
-    if (end == 0) return -1;
+    if (start < 0 || end < 0) return -1;
     *len = (end - start);
 
     return start;
 }
 
-char* code2html(char *code, unsigned char mdenable)
+char* code2html(char *code, unsigned char enablefc)
 {
     char *html;
     int index;
     size_t len, codelen;
     char *scode;
+    char *stag;
+    char *etag;
 
     tokens = createlist();
+    out = createstring("", strlen(code) + 1024);
 
-    if (mdenable) {
+    if (enablefc) {
         index = findcode(code, &len);
 
         if (index >= 0) {
-            scode = (char*)calloc(len - 5, sizeof(char));
-            memcpy(scode, code + index + 3, len - 6);
+            scode = (char*)calloc(len, sizeof(char));
+            memcpy(scode, code + index + 6, len - 7);
             tokenize(scode);
             free(scode);
+            stag = "<code class=\"code-highlight\">";
+            etag = "</code>";
         }
     } else {
         tokenize(code);
+        stag = "<pre><code class=\"code-highlight\">";
+        etag = "</code></pre>";
     }
-
-    out = createstring("", strlen(code) + 1024);
 
     render(tokens);
 
-    if (mdenable && index > 0) {
+    if (enablefc && index > 0) {
         codelen = strlen(code);
-        html = (char*)calloc(codelen + strlen(out->str) + 1, sizeof(char));
-        memcpy(html, code, index - 1);
+        html = (char*)calloc(codelen + strlen(stag) + strlen(etag) + strlen(out->str) + 1, sizeof(char));
+        memcpy(html, code, index);
+        strcat(html, stag);
         strcat(html, out->str);
-        strcat(html, code + index + len + 1);
+        strcat(html, etag);
+        strcat(html, code + index + len + 7);
 
         /*
         if (codelen >= len) {
             memcpy(html, code + len + 1, codelen);
         }*/
     } else {
-        html = (char*)calloc(strlen(out->str) + 1, sizeof(char));
+        html = (char*)calloc(strlen(stag) + strlen(etag) + strlen(out->str) + 1, sizeof(char));
+        strcat(html, stag);
         strcat(html, out->str);
+        strcat(html, etag);
     }
 
     freestring(out);
@@ -388,7 +406,7 @@ int main(int argc, char **argv)
     FILE *f;
     char *html;
     char *fname;
-    unsigned char mdenable = 0;
+    unsigned char enablefc = 0;
 
     if (argc < 2) {
         printf("Usage: code2html  <filename>\n");
@@ -397,8 +415,8 @@ int main(int argc, char **argv)
 
     if (argc > 2) {
         fname = argv[2];
-        if (strcmp(argv[1], "-md") == 0) {
-            mdenable = 1;
+        if (strcmp(argv[1], "-html") == 0) {
+            enablefc = 1;
         }
     } else {
         fname = argv[1];
@@ -414,7 +432,7 @@ int main(int argc, char **argv)
     fread(buff, 1, 1<<25, f);
     fclose(f);
 
-    html = code2html(buff, mdenable);
+    html = code2html(buff, enablefc);
     printf("%s", html);
     free(html);
 
